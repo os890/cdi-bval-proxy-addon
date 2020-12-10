@@ -19,21 +19,46 @@
 package org.os890.proxy.addon.owb;
 
 import org.apache.bval.jsr.resolver.InstanceResolver;
+import org.apache.deltaspike.core.util.ExceptionUtils;
 import org.apache.webbeans.config.WebBeansContext;
+import org.apache.webbeans.proxy.OwbInterceptorProxy;
 import org.apache.webbeans.proxy.OwbNormalScopeProxy;
 
-import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Provider;
+import java.lang.reflect.Field;
 
-@ApplicationScoped
+import static org.apache.deltaspike.core.util.ProxyUtils.isProxiedClass;
+
 public class OwbInstanceResolver implements InstanceResolver {
     @Override
     public <T> T resolveInstance(T instance) {
+        T result = null;
+        if (instance instanceof OwbInterceptorProxy) {
+            result = extractIntercepted(instance);
+        }
         if (instance instanceof OwbNormalScopeProxy) {
             OwbNormalScopeProxy proxy = (OwbNormalScopeProxy) instance;
             Provider<T> provider = WebBeansContext.currentInstance().getNormalScopeProxyFactory().getInstanceProvider(proxy);
-            return provider.get();
+            result = provider.get();
+
+            if (isProxiedClass(result.getClass())) {
+                result = extractIntercepted(instance);
+            }
         }
-        return null;
+        return result;
+    }
+
+    private <T> T extractIntercepted(T instance) {
+        if (instance instanceof OwbNormalScopeProxy) {
+            Provider<T> provider = WebBeansContext.currentInstance().getNormalScopeProxyFactory().getInstanceProvider((OwbNormalScopeProxy) instance);
+            instance = provider.get();
+        }
+        try {
+            Field proxiedInstanceField = instance.getClass().getDeclaredField("owbIntDecProxiedInstance");
+            proxiedInstanceField.setAccessible(true);
+            return (T) proxiedInstanceField.get(instance);
+        } catch (Exception e) {
+            throw ExceptionUtils.throwAsRuntimeException(e);
+        }
     }
 }
