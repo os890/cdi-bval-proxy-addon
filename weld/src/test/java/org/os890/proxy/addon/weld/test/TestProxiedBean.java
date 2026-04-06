@@ -16,13 +16,19 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.os890.proxy.addon.weld.test;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.validation.constraints.Size;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.validation.constraints.Size;
 
+/**
+ * Test bean that is proxied by the CDI container due to {@code @ApplicationScoped}.
+ * Contains a field with a constraint that will be violated to verify proxy unwrapping.
+ */
 @ApplicationScoped
 public class TestProxiedBean {
+
     @Size(min = 4)
     private String invalidValue = "abc";
 }

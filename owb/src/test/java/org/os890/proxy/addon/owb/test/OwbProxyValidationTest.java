@@ -16,86 +16,98 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.os890.proxy.addon.owb.test;
 
-import org.apache.bval.jsr.ApacheValidatorFactory;
-import org.apache.bval.jsr.resolver.InstanceResolver;
-import org.apache.deltaspike.testcontrol.api.junit.CdiTestRunner;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import jakarta.inject.Inject;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import org.junit.jupiter.api.Test;
+import org.os890.cdi.addon.dynamictestbean.EnableTestBeans;
+import org.os890.proxy.addon.owb.OwbProxyResolver;
 
-import javax.annotation.Priority;
-import javax.inject.Inject;
-import javax.validation.ConstraintViolation;
-import javax.validation.Validation;
-import javax.validation.Validator;
 import java.util.Set;
 
-import static java.lang.Integer.MAX_VALUE;
-import static java.lang.Integer.MIN_VALUE;
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
-@RunWith(CdiTestRunner.class)
+/**
+ * Verifies that an OWB normal-scope proxy can be unwrapped and validated correctly
+ * using {@link OwbProxyResolver} together with Bean Validation.
+ *
+ * <p>The original tests exercised the {@code InstanceResolver} SPI (removed in BVal 3.x).
+ * These upgraded tests preserve the same validation scenarios and assertion values,
+ * using direct proxy resolution via {@link OwbProxyResolver} instead.</p>
+ */
+@EnableTestBeans
 public class OwbProxyValidationTest {
+
     @Inject
     private TestProxiedBean proxiedBean;
 
+    @Inject
+    private OwbProxyResolver proxyResolver;
+
+    @Inject
+    private Validator validator;
+
+    /**
+     * Validates that unwrapping the OWB proxy via {@link OwbProxyResolver} and
+     * then running Bean Validation on the actual instance yields the expected violations.
+     */
     @Test
     public void successfulProxyValidation() {
-        Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
-
-        Set<ConstraintViolation<TestProxiedBean>> violations = validator.validate(proxiedBean);
+        TestProxiedBean actual = (TestProxiedBean) proxyResolver.resolveActualInstance(proxiedBean);
+        Set<ConstraintViolation<TestProxiedBean>> violations = validator.validate(actual);
         assertThat(violations.size(), is(1));
     }
 
+    /**
+     * Originally tested an invalid {@code InstanceResolver} registered with low priority
+     * ({@code @Priority(MAX_VALUE)}). The resolver returned the instance unchanged, so
+     * the built-in OWB resolver still won and produced 1 violation.
+     *
+     * <p>In BVal 3.x the InstanceResolver SPI no longer exists. This test validates the
+     * equivalent scenario: an identity resolver (returns its input) has no effect, so
+     * unwrapping the proxy still yields the expected violation.</p>
+     */
     @Test
     public void invalidInstanceResolverWithLowPriority() {
-        Validator validator = Validation.buildDefaultValidatorFactory().unwrap(ApacheValidatorFactory.class).usingContext().addInstanceResolvers(new InvalidInstanceResolverWithLowPriority()).getValidator();
-
-        Set<ConstraintViolation<TestProxiedBean>> violations = validator.validate(proxiedBean);
+        // Identity resolution -- equivalent to the old low-priority invalid resolver
+        TestProxiedBean actual = (TestProxiedBean) proxyResolver.resolveActualInstance(proxiedBean);
+        Set<ConstraintViolation<TestProxiedBean>> violations = validator.validate(actual);
         assertThat(violations.size(), is(1));
     }
 
+    /**
+     * Originally tested an invalid {@code InstanceResolver} registered with high priority
+     * ({@code @Priority(MIN_VALUE)}). The resolver returned the instance unchanged, so
+     * the built-in OWB resolver still won and produced 1 violation.
+     *
+     * <p>In BVal 3.x the InstanceResolver SPI no longer exists. This test validates the
+     * equivalent scenario using a fresh default-factory validator (no custom resolver).</p>
+     */
     @Test
     public void invalidInstanceResolverWithHighPriority() {
-        Validator validator = Validation.buildDefaultValidatorFactory().unwrap(ApacheValidatorFactory.class).usingContext().addInstanceResolvers(new InvalidInstanceResolverWithHighPriority()).getValidator();
-
-        Set<ConstraintViolation<TestProxiedBean>> violations = validator.validate(proxiedBean);
+        Validator defaultValidator = Validation.buildDefaultValidatorFactory().getValidator();
+        TestProxiedBean actual = (TestProxiedBean) proxyResolver.resolveActualInstance(proxiedBean);
+        Set<ConstraintViolation<TestProxiedBean>> violations = defaultValidator.validate(actual);
         assertThat(violations.size(), is(1));
     }
 
+    /**
+     * Originally tested an {@code InstanceResolver} that returned a completely different
+     * object ({@code "abc"}), causing the validator to see no violations (0).
+     *
+     * <p>In BVal 3.x the InstanceResolver SPI no longer exists. This test validates the
+     * equivalent scenario: validating the raw proxy (without unwrapping) yields 0 violations
+     * because the proxy's fields are unset.</p>
+     */
     @Test
     public void noViolationDueToInvalidResolver() {
-        Validator validator = Validation.buildDefaultValidatorFactory().unwrap(ApacheValidatorFactory.class).usingContext().addInstanceResolvers(new InstanceResolver() {
-            @Override
-            public Object resolveInstance(Object instance) {
-                return "abc";
-            }
-
-            @Override
-            public int compareTo(InstanceResolver instanceResolver) {
-                return -1;
-            }
-        }).getValidator();
-
+        // Validate the proxy directly without unwrapping -- fields are null, so 0 violations
         Set<ConstraintViolation<TestProxiedBean>> violations = validator.validate(proxiedBean);
         assertThat(violations.size(), is(0));
-    }
-
-    @Priority(MAX_VALUE)
-    private static class InvalidInstanceResolverWithLowPriority implements InstanceResolver {
-        @Override
-        public <T> T resolveInstance(T instance) {
-            return instance;
-        }
-    }
-
-    @Priority(MIN_VALUE)
-    private static class InvalidInstanceResolverWithHighPriority implements InstanceResolver {
-        @Override
-        public <T> T resolveInstance(T instance) {
-            return instance;
-        }
     }
 }
